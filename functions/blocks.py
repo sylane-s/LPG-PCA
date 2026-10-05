@@ -46,7 +46,8 @@ class Blocks:
     
     # Mean Sqaured Error (MSE) between two blocks
     # To be improved
-    # Reason : check typing
+    # Reason : typing + easier functions will be implemented
+    """
     def block_matching(self, vector1, vector2, SNR):
         MSE = 0
         assert(vector1.shape == vector2.shape)
@@ -58,5 +59,6 @@ class Blocks:
         if SNR:
             return 10*np.log10(255*255/MSE)
         return MSE
+    """
     
         

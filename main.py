@@ -30,6 +30,10 @@ noisy_image =  np.uint8(image.copy() + sigma*np.random.randn(w,h))
 Base idea :
 create as many L_blocks and do the PCA on each of them
 extract pixels and compute I_hat
+
+Issue :
+A lot of pixels on the border are left out...
+see later
 """
 # L_corners is the corners of all possible L_blocks in image
 L_corners = []

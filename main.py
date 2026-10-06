@@ -49,12 +49,13 @@ for x in range(w-L+1):
 
 # L_corners = L_corners[:len(L_corners)//2] # debug
 
+K_corners = blocks.possible_corners(K,L)
+
 for L_corner in L_corners:
     print(L_corner)
     # Building the L and K block structures
 
     L_block = blocks.square_block(noisy_image, L_corner, L)
-    K_corners = blocks.possible_corners(K,L)
     x_i_v_hat = []
 
     for K_corner in K_corners:

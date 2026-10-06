@@ -32,6 +32,7 @@ def lpg_pca(noisy_image, L=41, K=5, sigma=10, T=25, c=8):
     # empty tensor
 
     for x in range(H):
+        
         # PCA is computed by each row of the image (=solving W PCA problems at once)
         rows = patches[x:x + nw]                                   # (nw, Wp, m)
         win = rows.unfold(1, nw, 1)                                # (nw, W, m, nw)

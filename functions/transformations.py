@@ -7,10 +7,12 @@ class Transformations:
 
     # Centralizes sample matrix (duh)
     def centralize_sample_matrix(self, sample_matrix):
+        mu = []
         for i in range (len(sample_matrix)):
             mu_i = sample_matrix[i].mean()
+            mu.append(mu_i)
             sample_matrix[i] = sample_matrix[i] - mu_i
-        return sample_matrix
+        return sample_matrix, mu
 
     # Covariance matrix of the centralized sample matrix
     def covariance_sample_matrix(self, centralized_sample_matrix):

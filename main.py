@@ -31,36 +31,44 @@ def lpg_pca(noisy_image, L, K, sigma, T, c):
 
     for x in range(H):
         
-        # PCA is computed by each row of the image (=solving W PCA problems at once)
+        # PCA is computed for each row of the image (=solving W PCA problems at once)
         rows = patches[x:x + nw]                                   # (nw, Wp, m)
         win = rows.unfold(1, nw, 1)                                # (nw, W, m, nw)
         X = win.permute(1, 0, 3, 2).reshape(W, N, m)               # (W, N, m)
 
-        x0 = X[:, N // 2, :] # Middle element of the sample vector (see paper)
+        x0 = X[:, N // 2, :] # Middle element of the sample vector (see paper) 
+        # a.k.a K-Block centered around the pixel to be retrieved
 
         d = ((X - x0[:, None, :] )** 2).mean(-1)                   # (W, N)
-        # MSE between X and x0
+        # Tensor containing MSEs between X and x0
+        # Reminder : Samples are added to cov if MSE < max_Ei i.e. if they are not "too noisy"
 
         kth = d.kthvalue(c * m, dim=1, keepdim=True).values        # (W, 1)
+        # 
         mask = ((d < max_Ei) | (d <= kth)).float().unsqueeze(-1)   # (W, N, 1)
+        # mask*X = valid samples for X in regard to x0
         cnt = mask.sum(1)                                          # (W, 1)
+        # Number of valid samples
 
         mu = (X * mask).sum(1) / cnt                               # (W, m)
+        # Average of valid samples
         Xc = (X - mu[:, None, :]) * mask                           # (W, N, m)
+        # Xc (Xcentered) = samples with mean 0
         cov = Xc.transpose(1, 2) @ Xc / cnt[:, :, None]            # (W, m, m)
-
+        # cov = 1/m X^T X
         lam, Phi = torch.linalg.eigh(cov)                          # (W, m), (W, m, m)
 
         y0 = torch.einsum("wik,wi->wk", Phi, x0 - mu)              # Phi^T (x0 - mu)
         wk = (lam - sigma**2).clamp(min=0) / lam.clamp(min=1e-10)
         out[x] = mu[:, m // 2] + (Phi[:, m // 2, :] * (wk * y0)).sum(-1)
+        # out = mean + P^-1 * (LMMSEd y0)
 
     return out.clamp(0, 255).cpu().numpy()
 
 
 if __name__ == "__main__":
     image = cv.imread("assets/lena.tif", cv.IMREAD_GRAYSCALE)
-    image = cv.resize(image, (512, 512), interpolation=cv.INTER_LINEAR)
+    image = cv.resize(image, (640, 640), interpolation=cv.INTER_LINEAR)
 
     sigma_noise = 20.0 # (Gaussian White) Noise Variance
     c_s = 0.35 # Experimental Parameter for "Noise Conservation" (see paper)
@@ -87,9 +95,17 @@ if __name__ == "__main__":
     noisy_u8 = np.clip(noisy, 0, 255).astype(np.uint8)
     clean_u8 = clean.astype(np.uint8)
     very_clean_u8 = very_clean.astype(np.uint8)
-    print("PSNR noisy :", cv.PSNR(image, noisy_u8),"dB")
-    print("PSNR denoised 1 time (=stage 1 of LPG PCA):", cv.PSNR(image, clean_u8),"dB")
-    print("PSNR denoised 2 times (=stage 2 of LPG PCA)", cv.PSNR(image, very_clean_u8),"dB")
+
+    # Metrics
+    PSNR_1 = cv.PSNR(image, noisy_u8)
+    PSNR_2 = cv.PSNR(image, clean_u8)
+    PSNR_3 = cv.PSNR(image, very_clean_u8)
+    print("PSNR noisy :", PSNR_1,"dB")
+    print("PSNR denoised 1 time (=stage 1 of LPG PCA):", PSNR_2,"dB")
+    print("PSNR denoised 2 times (=stage 2 of LPG PCA)", PSNR_3,"dB")
+    print("Gain from step 1 -> 2 :", PSNR_2-PSNR_1,"dB")
+    print("Gain from step 2 -> 3 :", PSNR_3-PSNR_2,"dB")
+
     cv.imshow("noisy | clean | very clean", np.hstack([noisy_u8, clean_u8, very_clean_u8]))
     cv.waitKey(0)
     cv.destroyAllWindows()

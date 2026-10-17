@@ -1,6 +1,7 @@
 import cv2 as cv
 import numpy as np
 import torch
+import nibabel as nib
 
 dev = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 print("device (cuda or cpu) :", dev)
@@ -68,11 +69,14 @@ def lpg_pca(noisy_image, L, K, sigma, T, c):
 
 if __name__ == "__main__":
     image = cv.imread("assets/lena.tif", cv.IMREAD_GRAYSCALE)
-    image = cv.resize(image, (640, 640), interpolation=cv.INTER_LINEAR)
+    nifti_img = nib.load("niftis/0aeoorbt.nii.gz")
+    layers = [nifti_img.get_fdata()[:, :, k] for k in range(256)]
+    max_img = max(layers, key=np.std)
+    image = cv.resize(max_img, (256, 256), interpolation=cv.INTER_LINEAR)
 
-    sigma_noise = 20.0 # (Gaussian White) Noise Variance
+    sigma_noise = 10.0 # (Gaussian White) Noise Variance
     c_s = 0.35 # Experimental Parameter for "Noise Conservation" (see paper)
-    noisy = image.astype(np.float32) + (sigma_noise * np.random.randn(*image.shape)).astype(np.float32) 
+    # noisy = image.astype(np.float32) + (sigma_noise * np.random.randn(*image.shape)).astype(np.float32) 
     # Overall is better as float32
     # Having uint8 made pixel values go above 255 with noise so clipping is only done at the end
 
@@ -81,31 +85,30 @@ if __name__ == "__main__":
     t0 = time.time()
 
     # First step
-    clean = lpg_pca(noisy, L=41, K=5, sigma=sigma_noise, T=25.0, c=8)
+    clean = lpg_pca(image, L=41, K=5, sigma=sigma_noise, T=25.0, c=8)
     print(f"Runtime (Step 1) :",time.time()-t0,"s")
     
     # Updating noise level
-    sigma_s = c_s * np.sqrt(max(0,sigma_noise**2 - np.mean((noisy-clean)**2)))
+    sigma_s = c_s * np.sqrt(max(0,sigma_noise**2 - np.mean((image-clean)**2)))
     print(f"sigma_s :",sigma_s)
 
     # Second step
     very_clean = lpg_pca(clean, L=41, K=5, sigma=sigma_s, T=25.0, c=8)
     print(f"Runtime (Step 1+2) :",time.time()-t0,"s")
-
-    noisy_u8 = np.clip(noisy, 0, 255).astype(np.uint8)
+    
+    noisy_u8 = np.clip(image, 0, 255).astype(np.uint8)
+    image = image.astype(np.uint8)
     clean_u8 = clean.astype(np.uint8)
     very_clean_u8 = very_clean.astype(np.uint8)
 
     # Metrics
-    PSNR_1 = cv.PSNR(image, noisy_u8)
-    PSNR_2 = cv.PSNR(image, clean_u8)
-    PSNR_3 = cv.PSNR(image, very_clean_u8)
+    PSNR_1, PSNR_2, PSNR_3 = cv.PSNR(image, noisy_u8), cv.PSNR(image, clean_u8), cv.PSNR(image, very_clean_u8)
     print("PSNR noisy :", PSNR_1,"dB")
     print("PSNR denoised 1 time (=stage 1 of LPG PCA):", PSNR_2,"dB")
     print("PSNR denoised 2 times (=stage 2 of LPG PCA)", PSNR_3,"dB")
     print("Gain from step 1 -> 2 :", PSNR_2-PSNR_1,"dB")
     print("Gain from step 2 -> 3 :", PSNR_3-PSNR_2,"dB")
-
+    
     cv.imshow("noisy | clean | very clean", np.hstack([noisy_u8, clean_u8, very_clean_u8]))
     cv.waitKey(0)
     cv.destroyAllWindows()

@@ -11,25 +11,22 @@ import torch.nn.functional as F
 dev = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 print("device (cuda or cpu) :", dev)
 
-# ---------------------------------------------------------------------------
-# Paramètres (à modifier directement ici)
-# ---------------------------------------------------------------------------
-L, K = 11, 3             # cube d'entraînement L^3, cube variable K^3 (impairs, L > K)
-T = 25.0                 # seuil LPG (unités 0-255, voir normalisation plus bas)
-c = 8                    # nb minimal d'échantillons = c * K^3
-c_s = 0.35               # "Noise Conservation" de l'étape 2 (voir papier)
-batch = 2048             # nb de voxels traités en parallèle (baisser si manque de mémoire GPU)
-aggregate = True         # True : moyenne de toutes les estimations d'un voxel (papier, +0.3 dB)
-                         # False : seulement le voxel central de chaque K-cube (comme la version 2D)
+L, K = 11, 3             # Trainin cube size and sample cube size
+T = 25.0                 # Threshold (number of samples deemed correct if lower)
+c = 8                    # min number of samples = c * K^3
+c_s = 0.35               # "Noise Conservation" between two steps (see paper)
+batch = 2048             # Number of voxels in a batch
+aggregate = True         # True : Avergae all voxel estimations (paper, +0.3 dB)
+                         # False : Use only the central K-Block
 
-noise_mode = "gaussian"  # "none" : le nifti est déjà bruité | "gaussian" / "rician" : bruit ajouté (test)
-sigma_noise = 10.0       # écart-type (PAS variance) du bruit ajouté, en unités 0-255
-sigma_known = None       # si noise_mode == "none" : sigma connu (None = estimé automatiquement)
+noise_mode = "gaussian"  # "none" : no added nosie | "gaussian" / "rician" : added g/r noise
+sigma_noise = 20.0       # Noise parameter (std)
+sigma_known = None       # If None, code estimates noise using 
 
-fg_thresh = 5.0          # masque avant-plan (unités 0-255) : seuls ces voxels sont débruités. None = tout
-dilate = 2               # dilatation du masque (voxels) pour inclure les bords
-show = False             # afficher la coupe centrale (bloquant) ; le PNG est de toute façon sauvegardé
-out_dir = "output"       # dossier de sortie (différent de niftis/ pour ne pas polluer le tirage aléatoire)
+fg_thresh = 5.0          # Pixels > fg_thresh are subjected to denoising
+dilate = 2               # Mask dilatation (to include borders)
+show = False             # Show central layer
+out_dir = "output"       # Output file (for saving niftis)
 
 
 def lpg_pca_3d(vol, L, K, sigma, T, c, mask=None, batch=2048, aggregate=True):
@@ -43,11 +40,11 @@ def lpg_pca_3d(vol, L, K, sigma, T, c, mask=None, batch=2048, aggregate=True):
     r = K // 2
     nw = L - K + 1
     N = nw ** 3                    # Number of K-Blocks within L-Window
-    k_min = min(c * m, N)          # on ne peut pas exiger plus d'échantillons qu'il n'y en a
+    k_min = min(c * m, N)          # Min amount of samples
     max_Ei = T + 2 * sigma ** 2    # Threshold (see paper)
 
     orig = torch.from_numpy(np.ascontiguousarray(vol)).float().to(dev)
-    # Padding miroir 3D : chaque voxel est le centre d'une L-fenêtre complète
+    # Added padding such that evey pixel can be the center of a L-Block
     img = F.pad(orig[None, None], (l,) * 6, mode="reflect")[0, 0]     # (H+2l, W+2l, D+2l)
 
     fg = (torch.ones(H, W, D, dtype=torch.bool, device=dev) if mask is None
@@ -77,11 +74,10 @@ def lpg_pca_3d(vol, L, K, sigma, T, c, mask=None, batch=2048, aggregate=True):
             sub = slab[:, y0:y1 + L - 1, :]
             v = (sub.unfold(0, L, 1).unfold(1, L, 1).unfold(2, L, 1)      # (1,cy',D,L,L,L)
                     .unfold(3, K, 1).unfold(4, K, 1).unfold(5, K, 1))     # (1,cy',D,nw,nw,nw,K,K,K)
-            X = v[0][sel].reshape(-1, N, m)                  # (n, N, m) : copie des seuls voxels utiles
+            X = v[0][sel].reshape(-1, N, m)                  # (n, N, m) : useful voxels
 
-            x0 = X[:, N // 2, :]  # K-cube central (celui du voxel à débruiter)
+            x0 = X[:, N // 2, :]  # K-cube to be denoised
 
-            # Critère LPG : MSE (moyenne sur les m composantes !) entre X et x0
             d = ((X - x0[:, None, :]) ** 2).mean(-1)                   # (n, N)
             kth = d.kthvalue(k_min, dim=1, keepdim=True).values        # (n, 1)
             msk = ((d < max_Ei) | (d <= kth)).float().unsqueeze(-1)    # (n, N, 1)
@@ -94,13 +90,12 @@ def lpg_pca_3d(vol, L, K, sigma, T, c, mask=None, batch=2048, aggregate=True):
 
             y0_ = torch.einsum("nik,ni->nk", Phi, x0 - mu)             # Phi^T (x0 - mu)
             wk = (lam - sigma ** 2).clamp(min=0) / lam.clamp(min=1e-10)
-            est = mu + torch.einsum("nik,nk->ni", Phi, wk * y0_)       # (n, m) : K-cube débruité
+            est = mu + torch.einsum("nik,nk->ni", Phi, wk * y0_)       # (n, m) : Denoised K-Block !
 
             if aggregate:
                 E = torch.zeros(y1 - y0, D, m, device=dev)
                 E[sel] = est
                 Wt = sel.float()
-                # chaque voxel du K-cube est reposé à sa place (coordonnées du volume padé)
                 for o, (a, b, cc) in enumerate(offsets):
                     xs, ys, zs = x + l - r + a, y0 + l - r + b, l - r + cc
                     acc[xs, ys:ys + (y1 - y0), zs:zs + D] += E[:, :, o]
@@ -144,18 +139,17 @@ def psnr(ref, est, mask=None, peak=255.0):
 
 
 def denoise_nifti(path):
-    """Débruite un fichier nifti 3D avec les paramètres définis en haut du fichier."""
+    # Denoise nifti files
     nii = nib.load(path)
     data = np.squeeze(nii.get_fdata(dtype=np.float32))
     assert data.ndim == 3, f"{path} : volume 3D attendu, reçu {data.shape}"
     name = Path(path).name.replace(".nii.gz", "").replace(".nii", "")
     print(f"\n=== {name} {data.shape} ===")
 
-    # Normalisation à l'échelle 0-255 du papier pour que T=25 garde son sens
-    # (percentile 99.9 pour qu'un voxel aberrant n'écrase pas le contraste)
+    # Normalizing
     hi = float(np.percentile(data, 99.9))
     scale = 255.0 / hi
-    image = data * scale          # "image" = référence (propre si on ajoute du bruit, sinon la donnée brute)
+    image = data * scale          # "image" = reference (either raw data or itself based on noise)
 
     mask = make_mask(image, fg_thresh, dilate) if fg_thresh is not None else None
     if mask is not None:
@@ -182,7 +176,7 @@ def denoise_nifti(path):
     clean = lpg_pca_3d(noisy, L=L, K=K, sigma=sigma, T=T, c=c, mask=mask, batch=batch, aggregate=aggregate)
     print(f"Runtime (Step 1) :", time.time() - t0, "s")
 
-    # Updating noise level (mêmes formules que le papier, eq. 3.17) ; MSE calculé sur le masque seulement
+    # Noise level update
     resid = noisy - clean
     mse_res = np.mean(resid[mask] ** 2) if mask is not None else np.mean(resid ** 2)
     sigma_s = c_s * np.sqrt(max(0, sigma ** 2 - mse_res))
@@ -192,10 +186,10 @@ def denoise_nifti(path):
     very_clean = lpg_pca_3d(clean, L=L, K=K, sigma=sigma_s, T=T, c=c, mask=mask, batch=batch, aggregate=aggregate)
     print(f"Runtime (Step 1+2) :", time.time() - t0, "s")
 
-    # Clipping uniquement à la fin (le bruit fait sortir les valeurs de [0, 255])
+    # Clipping (noise can make the pixel values go above 255)
     noisy_c, clean_c, very_clean_c = (np.clip(a, 0, 255) for a in (noisy, clean, very_clean))
 
-    # Metrics (seulement si on connaît la référence propre)
+    # Metrics
     if noise_mode != "none":
         PSNR_1, PSNR_2, PSNR_3 = (psnr(image, a, mask) for a in (noisy_c, clean_c, very_clean_c))
         print("PSNR noisy :", PSNR_1, "dB")
@@ -204,7 +198,7 @@ def denoise_nifti(path):
         print("Gain from step 1 -> 2 :", PSNR_2 - PSNR_1, "dB")
         print("Gain from step 2 -> 3 :", PSNR_3 - PSNR_2, "dB")
 
-    # Sauvegarde : nifti (échelle d'origine, même affine/header) + aperçu de la coupe axiale centrale
+    # Saving
     Path(out_dir).mkdir(exist_ok=True)
     hdr = nii.header.copy()
     hdr.set_data_dtype(np.float32)

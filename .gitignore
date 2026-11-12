@@ -2,4 +2,4 @@
 *.jpg
 *.tif
 *.gz
-/niftis
+niftis/*.gz

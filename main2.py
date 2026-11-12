@@ -19,7 +19,7 @@ batch = 2048             # Number of voxels in a batch
 aggregate = True         # True : Avergae all voxel estimations (paper, +0.3 dB)
                          # False : Use only the central K-Block
 
-noise_mode = "gaussian"  # "none" : no added nosie | "gaussian" / "rician" : added g/r noise
+noise_mode = "rician"  # "none" : no added nosie | "gaussian" / "rician" : added g/r noise
 sigma_noise = 20.0       # Noise parameter (std)
 sigma_known = None       # If None, code estimates noise using 
 

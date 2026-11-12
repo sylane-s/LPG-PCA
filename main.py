@@ -71,8 +71,7 @@ if __name__ == "__main__":
     image = cv.imread("assets/lena.tif", cv.IMREAD_GRAYSCALE)
     nifti_img = nib.load("niftis/0aeoorbt.nii.gz")
     layers = [nifti_img.get_fdata()[:, :, k] for k in range(256)]
-    max_img = max(layers, key=np.std)
-    image = cv.resize(max_img, (256, 256), interpolation=cv.INTER_LINEAR)
+    image = cv.resize(image, (256, 256), interpolation=cv.INTER_LINEAR)
 
     sigma_noise = 10.0 # (Gaussian White) Noise Variance
     c_s = 0.35 # Experimental Parameter for "Noise Conservation" (see paper)

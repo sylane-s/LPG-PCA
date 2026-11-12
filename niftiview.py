@@ -1,14 +1,15 @@
-import nibabel as nib
-import matplotlib.pyplot as plt
-import cv2
+import glob, random
+from pathlib import Path
+import cv2 as cv
 import numpy as np
+from main2 import denoise_nifti
 
-nifti_img = nib.load("niftis/0aeoorbt.nii.gz")
-print(nifti_img.shape) # prints the shape of the image data
-print(nifti_img.get_data_dtype()) # prints the data type of the image data
-print(nifti_img.affine)
-print(type(nifti_img.get_fdata()[:, :, 50]))
-images = [nifti_img.get_fdata()[:, :, k] for k in range(256)]
-max_img = max(images, key=np.std)
-plt.imshow(max_img, cmap='gray')
-plt.show()
+files = glob.glob("niftis/*.nii*")
+for f in random.sample(files, min(2, len(files))):
+    noisy, clean, very_clean = denoise_nifti(f)
+    z = noisy.shape[2] // 2
+    cv.imshow(Path(f).name, np.hstack([a[:, :, z] for a in (noisy, clean, very_clean)]).astype(np.uint8))
+    cv.waitKey(1)
+
+cv.waitKey(0)
+cv.destroyAllWindows()
